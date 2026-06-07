@@ -1,59 +1,26 @@
-# RtaAudio
+# Smart RTA Analyzer 🎛️
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.0.0.
+Un Analizador de Espectro en Tiempo Real (RTA) de alto rendimiento construido en **Angular**, diseñado para aplicaciones de sonido en vivo y calibración acústica. 
 
-## Development server
+Este proyecto aprovecha la **Web Audio API** nativa y la aceleración por hardware mediante **HTML5 Canvas** para entregar un análisis espectral fluido a 60fps. Ideal para integrarse en ecosistemas de monitoreo o para analizar señales provenientes de consolas digitales multicanal (como la Soundcraft Ui24R o similares) conectadas vía USB.
 
-To start a local development server, run:
+## 🚀 Características Principales
 
-```bash
-ng serve
-```
+* **Procesamiento de Audio Crudo:** Desactiva nativamente los filtros del navegador (cancelación de eco, supresión de ruido y control de ganancia automática) para garantizar una respuesta plana ($Flat$) y mediciones precisas en decibelios.
+* **Descubrimiento de Hardware:** Mapeo automático de interfaces de audio y mesas de sonido conectadas al sistema operativo.
+* **Motor de Alto Rendimiento:** Loop de renderizado optimizado con `requestAnimationFrame` que no bloquea el hilo principal de la interfaz (UI).
+* **Visualización Logarítmica:** Gráfico de área continua con escala de frecuencia logarítmica (20Hz a 20kHz), emulando el estándar visual de la industria del audio profesional.
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+## 🛠️ Stack Tecnológico
 
-## Code scaffolding
+* **Frontend:** Angular (Signals, Control Flow, Standalone Components).
+* **Lenguaje:** TypeScript estricto.
+* **Procesamiento:** Web Audio API (`AnalyserNode`, Transformada Rápida de Fourier - FFT).
+* **Entorno:** Node.js 22 + `pnpm`.
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+## ⚙️ Instalación y Uso
 
-```bash
-ng generate component component-name
-```
-
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
-
-```bash
-ng generate --help
-```
-
-## Building
-
-To build the project run:
-
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+1. Clonar el repositorio.
+2. Instalar dependencias con pnpm:
+   ```bash
+   pnpm install
