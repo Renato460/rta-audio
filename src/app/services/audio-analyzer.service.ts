@@ -52,6 +52,16 @@ export class AudioAnalyzer {
             // CRITERIO DE ACEPTACIÓN: FFT en 2048 para resolución espectral óptima
             this.analyser.fftSize = 2048;
 
+            // 1. EL FIX: Ajustamos el rango dinámico (Headroom)
+            // Por defecto min es -100 y max es -30. Subimos el max a -10 o 0 para soportar coros y bandas en vivo.
+            this.analyser.minDecibels = -100; // Ruido de fondo (piso)
+            this.analyser.maxDecibels = -10;  // Techo máximo. Si el coro es MUY fuerte, ponlo en 0.
+
+            // 2. EXTRA PRO: Suavizado visual (Smoothing)
+            // El default es 0.8. Al subirlo un poco a 0.85, la caída de las barras será más suave, 
+            // ideal para visualizar la resonancia natural de las voces en un coro.
+            this.analyser.smoothingTimeConstant = 0.85;
+
             // Inicializar el tamaño del buffer de datos (Siempre es la mitad del fftSize = 1024 bins)
             const bufferLength = this.analyser.frequencyBinCount;
             this.dataArray = new Uint8Array(bufferLength) as Uint8Array<ArrayBuffer>;
@@ -137,5 +147,15 @@ export class AudioAnalyzer {
         this.analyser = null;
         this.isListening.set(false);
         console.log('🛑 [Tech Lead] Infraestructura de audio liberada limpiamente.');
+    }
+
+    // Retorna el piso de decibelios configurado en el analizador
+    getMinDecibels(): number {
+        return this.analyser ? this.analyser.minDecibels : -100;
+    }
+
+    // Retorna el techo de decibelios configurado en el analizador
+    getMaxDecibels(): number {
+        return this.analyser ? this.analyser.maxDecibels : -10;
     }
 }

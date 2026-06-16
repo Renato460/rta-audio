@@ -22,13 +22,24 @@
     </select>
   </div>
 
-  <div>
+<div style="display: flex; gap: 10px; margin-bottom: 20px;">
+    
     <button 
       (click)="toggleListening()" 
       [style.background-color]="audioService.isListening() ? '#d9534f' : '#5cb85c'"
       style="color: white; border: none; padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 4px; font-weight: bold;">
       {{ audioService.isListening() ? '🛑 Detener Analizador' : '🎤 Iniciar Analizador' }}
     </button>
+
+    <button 
+      (click)="toggleFreeze()"
+      [disabled]="!audioService.isListening()"
+      [style.background-color]="isFrozen() ? '#f0ad4e' : '#0275d8'"
+      [style.opacity]="!audioService.isListening() ? '0.5' : '1'"
+      style="color: white; border: none; padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 4px; font-weight: bold;">
+      {{ isFrozen() ? '▶ Reanudar (Espacio)' : '❄️ Congelar (Espacio)' }}
+    </button>
+
   </div>
 
   <div style="margin-top: 20px; padding: 10px; border-radius: 4px;"
@@ -43,7 +54,7 @@
     <canvas 
       #rtaCanvas 
       width="1024" 
-      height="300" 
+      height="500" 
       style="display: block; width: 100%; max-width: 1000px; margin: 0 auto;">
     </canvas>
   </div>
