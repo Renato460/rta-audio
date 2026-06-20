@@ -7,6 +7,12 @@ const TARGET_DBS = [-10, -20, -30, -40, -60, -80];
 const MIN_LOG_FREQ = 20;
 const FFT_SIZE = 2048;
 
+const FB_AMP_THRESHOLD = 170; 
+// 2. Isolation: Must be at least 40 units louder than its neighbors (Sharp Q-factor)
+const FB_ISOLATION = 20;      
+// 3. Persistence: Must sustain for 45 consecutive frames (~0.75 seconds)
+const FB_FRAMES = 30;
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -32,8 +38,20 @@ export class App implements OnInit, OnDestroy {
 
   private peaks: number[] = [];
 
+  private feedbackSustain: number[] = [];
+
   // NUEVO: Signal para controlar si la pantalla está congelada
   public isFrozen = signal<boolean>(false);
+
+  public hasSnapshot = signal<boolean>(false);
+  private referenceData: Uint8Array | null = null;
+
+  // NEW: View Mode state
+  public viewMode = signal<'RTA' | 'SPECTROGRAM'>('RTA');
+  
+  // NEW: Offscreen canvas for the waterfall memory
+  private offscreenCanvas: HTMLCanvasElement | null = null;
+  private offscreenCtx: CanvasRenderingContext2D | null = null;
 
   ngOnInit(): void {
     this.audioService.discoverDevices();
@@ -50,21 +68,25 @@ export class App implements OnInit, OnDestroy {
     this.selectedDeviceId.set(selectElement.value);
   }
 
+  takeSnapshot() {
+    const currentData = this.audioService.getFrequencyData();
+    if (currentData && currentData.length > 0) {
+      // Clone the array in memory
+      this.referenceData = new Uint8Array(currentData);
+      this.hasSnapshot.set(true);
+    }
+  }
+
+  clearSnapshot() {
+    this.referenceData = null;
+    this.hasSnapshot.set(false);
+  }
+
   toggleFreeze() {
     // Solo podemos congelar si el analizador está encendido
     if (this.audioService.isListening()) {
       this.isFrozen.set(!this.isFrozen());
     }
-  }
-
-  // NUEVO: Escuchamos la barra espaciadora en toda la ventana
-  @HostListener('window:keydown.space', ['$event'])
-  handleSpacebar(event: Event) {
-    // Evitamos que la barra espaciadora haga scroll hacia abajo en la página
-    const kbdEvent = event as KeyboardEvent;
-
-    kbdEvent.preventDefault();
-    this.toggleFreeze();
   }
 
   // Gatilla el inicio de la escucha con el dispositivo seleccionado
@@ -86,6 +108,156 @@ export class App implements OnInit, OnDestroy {
       } catch (error) {
         console.error('No se pudo iniciar el loop de animación debido a un error de audio.');
       }
+    }
+  }
+
+  private getThermalColor(value: number): string {
+    // Map 0-255 to a thermal gradient
+    // Quiet = Black -> Blue -> Purple -> Red -> Loud = Yellow/White
+    if (value < 10) return '#111111'; // Noise floor
+    
+    // Using HSL (Hue, Saturation, Lightness) for smooth color transitions
+    // 240 is Blue, 0 is Red in HSL
+    const hue = Math.max(0, 240 - (value / 255) * 260); 
+    const lightness = Math.min(50, (value / 255) * 50 + 10);
+    
+    return `hsl(${hue}, 100%, ${lightness}%)`;
+  }
+
+  private drawSpectrogram(
+    ctx: CanvasRenderingContext2D, data: Uint8Array, resolution: number, 
+    width: number, height: number, getLogX: (f: number) => number
+  ) {
+    if (!this.offscreenCanvas || !this.offscreenCtx) return;
+
+    const shiftSpeed = 2; // How fast the waterfall falls
+
+    // 1. Shift the offscreen canvas down
+    this.offscreenCtx.drawImage(
+      this.offscreenCanvas, 
+      0, 0, width, height - shiftSpeed, 
+      0, shiftSpeed, width, height - shiftSpeed
+    );
+
+    // 2. THE FIX: Clear the new top row with our "coldest" base color.
+    // This prevents the infinite smearing of silent frequencies.
+    this.offscreenCtx.fillStyle = '#111111';
+    this.offscreenCtx.fillRect(0, 0, width, shiftSpeed);
+
+    // 3. Draw the new line of frequency data
+    for (let i = 1; i < data.length; i++) {
+      const amp = data[i];
+      
+      // We removed the `if (amp === 0) continue;` optimization.
+      // We WANT it to paint the dark blue/black thermal color when silent.
+
+      const freq = i * resolution;
+      const x = getLogX(freq);
+      
+      const nextFreq = (i + 1) * resolution;
+      const nextX = getLogX(nextFreq);
+      const barWidth = Math.max(1, nextX - x);
+
+      this.offscreenCtx.fillStyle = this.getThermalColor(amp);
+      this.offscreenCtx.fillRect(x, 0, barWidth + 0.5, shiftSpeed); 
+    }
+
+    // 4. Stamp the entire offscreen memory onto the real, visible canvas
+    ctx.drawImage(this.offscreenCanvas, 0, 0);
+  }
+
+  private drawReferenceCurve(
+    ctx: CanvasRenderingContext2D, data: Uint8Array, resolution: number, 
+    width: number, height: number, maxDrawHeight: number, getLogX: (f: number) => number
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(0, height);
+
+    for (let i = 1; i < data.length; i++) {
+      const freq = i * resolution;
+      const x = getLogX(freq);
+      const barHeight = data[i];
+      const mappedHeight = (barHeight / 255) * maxDrawHeight;
+      ctx.lineTo(x, height - mappedHeight);
+    }
+
+    ctx.lineTo(width, height);
+    ctx.closePath();
+    
+    // Ghostly styling for the background reference
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'; // Very faint white fill
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Crisp white border
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  private drawFeedbackAlert(
+    ctx: CanvasRenderingContext2D, data: Uint8Array, resolution: number, 
+    width: number, height: number, getLogX: (f: number) => number
+  ) {
+    if (this.feedbackSustain.length !== data.length) {
+      this.feedbackSustain = new Array(data.length).fill(0);
+    }
+
+    let feedbackDetected = false;
+    let feedbackFreq = 0;
+    let feedbackX = 0;
+
+    for (let i = 5; i < data.length - 5; i++) {
+      const amp = data[i];
+
+      // 2. THE FIX: Widen the isolation check from 2 bins to 5 bins away
+      if (
+        amp > FB_AMP_THRESHOLD && 
+        (amp - data[i - 5]) > FB_ISOLATION && 
+        (amp - data[i + 5]) > FB_ISOLATION
+      ) {
+        this.feedbackSustain[i] += 1; 
+      } else {
+        this.feedbackSustain[i] = Math.max(0, this.feedbackSustain[i] - 2);
+      }
+
+      if (this.feedbackSustain[i] >= FB_FRAMES) {
+        feedbackDetected = true;
+        feedbackFreq = i * resolution;
+        feedbackX = getLogX(feedbackFreq);
+        
+        this.feedbackSustain[i] = FB_FRAMES; 
+      }
+    }
+
+    // --- VISUAL ALERT RENDERER ---
+    if (feedbackDetected) {
+      ctx.beginPath();
+      ctx.moveTo(feedbackX, 0);
+      ctx.lineTo(feedbackX, height);
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 50, 50, 1)';
+      ctx.font = 'bold 22px sans-serif';
+      
+      const formattedFreq = feedbackFreq >= 1000 
+        ? (feedbackFreq / 1000).toFixed(1) + 'k' 
+        : Math.round(feedbackFreq);
+        
+      const text = `⚠️ FEEDBACK: ${formattedFreq}Hz`;
+      
+      let textX = feedbackX;
+      if (textX < 120) textX = 120;
+      if (textX > width - 120) textX = width - 120;
+
+      ctx.textAlign = 'center';
+      const textWidth = ctx.measureText(text).width;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      // Made the background box slightly taller and vertically centered with the text
+      ctx.fillRect(textX - (textWidth / 2) - 15, 10, textWidth + 30, 40);
+
+      ctx.fillStyle = 'rgba(255, 50, 50, 1)';
+      ctx.fillText(text, textX, 38);
+      ctx.textAlign = 'left';
     }
   }
 
@@ -145,7 +317,7 @@ export class App implements OnInit, OnDestroy {
     }
 
     ctx.beginPath();
-    
+
     for (let i = 1; i < data.length; i++) {
       const freq = i * resolution;
       const x = getLogX(freq);
@@ -218,6 +390,20 @@ export class App implements OnInit, OnDestroy {
     const width = canvas.width;
     const height = canvas.height;
 
+    // --- NEW: Initialize Offscreen Canvas for Spectrogram ---
+    if (!this.offscreenCanvas) {
+      this.offscreenCanvas = document.createElement('canvas');
+      this.offscreenCanvas.width = width;
+      this.offscreenCanvas.height = height;
+      this.offscreenCtx = this.offscreenCanvas.getContext('2d', { willReadFrequently: true });
+      
+      // Fill it with a dark background initially
+      if (this.offscreenCtx) {
+        this.offscreenCtx.fillStyle = '#111111';
+        this.offscreenCtx.fillRect(0, 0, width, height);
+      }
+    }
+
       // 1. Helpers Matemáticos Centralizados
     const sampleRate = this.audioService.getSampleRate();
     const resolution = sampleRate / FFT_SIZE;
@@ -233,10 +419,25 @@ export class App implements OnInit, OnDestroy {
     const maxDrawHeight = height - (height * 0.05);
 
     // 2. Delegación del trabajo pesado a funciones específicas
-    this.clearCanvas(ctx, width, height);
-    this.drawRtaCurve(ctx, data, resolution, width, height, maxDrawHeight, getLogX);
-    this.drawPeakHold(ctx, data, resolution, width, height, maxDrawHeight, getLogX);
+    // 2. Delegación del trabajo pesado a funciones específicas
+    
+    if (this.viewMode() === 'RTA') {
+      // --- STANDARD RTA VIEW ---
+      this.clearCanvas(ctx, width, height);
+      if (this.referenceData) {
+        this.drawReferenceCurve(ctx, this.referenceData, resolution, width, height, maxDrawHeight, getLogX);
+      }
+      this.drawRtaCurve(ctx, data, resolution, width, height, maxDrawHeight, getLogX);
+      this.drawPeakHold(ctx, data, resolution, width, height, maxDrawHeight, getLogX);
+    } else {
+      // --- SPECTROGRAM WATERFALL VIEW ---
+      // We do NOT call clearCanvas here, because the waterfall stamps over the whole screen
+      this.drawSpectrogram(ctx, data, resolution, width, height, getLogX);
+    }
+
+    // UI Overlays (These always draw on top, regardless of the view mode)
     this.drawGrid(ctx, width, height, maxDrawHeight, getLogX);
+    this.drawFeedbackAlert(ctx, data, resolution, width, height, getLogX);
   }
 
   private stopAnimationLoop() {
